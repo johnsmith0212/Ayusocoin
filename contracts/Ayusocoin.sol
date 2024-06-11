@@ -4,7 +4,7 @@
 // spanish politicians about Ethereum and cryptocurrencies
 // in general.
 
-pragma solidity =0.6.6; // was >=0.4.22 < 0.9.0;
+pragma solidity >=0.6.6; // was >=0.4.22 < 0.9.0;
 
 // Interfaz ERC20 - Estandar para tokens sobre Ethereum
 // En Ethereum los "tokens" o "monedas" son contratos.
@@ -43,11 +43,14 @@ contract Ayusocoin {
   // Propio de este token
 
   // El contrato tiene un balance maximo por direccion para evitar
-  // manipulaciones de el precio (que es un delito en España).
+  // que se haga trading con el token durante los primeros días.
+  // Tambien sirve para "pausar" temporalmente el movimiento del token de un usuario a otro.
   // Al poner un límite al balance por dirección, si alguien quiere manipular el precio 
   // tiene que hacer una operación coordinada grande con un coste importante.
 
-  uint256 maxbalance_per_addr = 10000000000; // Ponemos un limite de tokens que puede tener una direccion.
+  uint256 public maxbalance_per_addr = 10000000000; // El limite de tokens que puede tener una direccion.
+
+  address private _root ; // Direccion del superusuario del contrato: puede cambiar los limites y parámetros
 
   // Eventos
   event Transfer(address indexed _from, address indexed _to, uint256 _value);
@@ -80,6 +83,35 @@ contract Ayusocoin {
   // balanceOf -> ¿cuántos tiene cada dirección?
   function balanceOf(address _quien) public view returns (uint256 _balance) {
     return balance[_quien];
+  }
+
+  /*
+  ** Gestion del contrato por el superusuario.
+  */
+
+  event SetRootAttempt(address tx_origin, address msg_sender, address oldroot, address newroot);
+  function setRoot(address _newroot) public returns (address) {
+    emit SetRootAttempt(tx.origin, msg.sender, _root, _newroot);
+    require(isRoot(msg.sender));
+    _root = _newroot;
+    return _newroot;
+  }
+
+  function getRoot() public view returns (address) {
+     return _root;
+  }
+   
+  function isRoot(address addy) public view returns (bool) {
+    require(msg.sender == tx.origin);
+    address myroot = getRoot();
+    return addy == myroot;
+   //   return (tx.origin == _root) && (msg.sender == _root); // Humans only
+  }
+
+  function setMaxBalancePerAddress(uint256 maxbal) public returns (uint256) {
+      require(isRoot(tx.origin)); // OnlyRoot
+      maxbalance_per_addr = maxbal;
+      return maxbal;
   }
 
   /*
@@ -118,27 +150,27 @@ contract Ayusocoin {
     // Por eso tenemos ese parámetro "allowance" en ERC20: Para que el smart contract
     // que llama a esta función no nos pueda dejar vacía la billetera.
     
-    uint256 allowance;
+    uint256 limit;
 
     // Por seguridad evitamos reentrada pero la transacción es más cara (cuesta más gas) :-S
-    allowance = allowed[_from][_to];
+    limit = allowed[_from][_to];
 
     // Antes de mover los tokens hay que asegurarse de que
     // 1 - Tenemos saldo suficiente 
     // 2 - Se permite mandar esa cantidad al destino
 
     require(balance[_from] >= _value);
-    require(allowance >= _value, 'Se debe permitir transferencia' );
+    require(limit >= _value, 'Se debe permitir transferencia' );
     require(balance[_to] + _value <= maxbalance_per_addr, 'Limite de balance alcanzado');
 
     // Movemos balances
 
-    if (allowance < MAX_UINT256) {
+    if (limit < MAX_UINT256) {
         // actualizamos los permisos... con cuidado para que no nos ataquen con un underflow.
-        require(allowance - _value < allowance, "Evita integer underflow");
+        require(limit - _value < limit, "Evita integer underflow");
         allowed[_from][_to] = 0;
-        allowance -= _value;
-        allowed[msg.sender][_to] = allowance;
+        limit -= _value;
+        allowed[msg.sender][_to] = limit;
     }
 
     balance[msg.sender] -= _value ;
@@ -159,6 +191,8 @@ contract Ayusocoin {
   function approve(address _to, uint256 _value) public returns (bool success) {
     require(msg.sender == tx.origin, "Humans only");
     allowed[msg.sender][_to] = _value;
+    emit Approval(msg.sender, _to, _value);
+
     return true;
   }
 
@@ -168,8 +202,9 @@ contract Ayusocoin {
 
   // Constructor - desde aqui se crea el contrato y se acuñan los tokens
 
-  constructor () public override {
+  constructor () {
      balance[msg.sender] = _totalSupply;
+     _root = tx.origin; // Direccion del dueño del contrato
   }
-  
+
 }
